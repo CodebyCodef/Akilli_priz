@@ -1,0 +1,5 @@
+# TP-Link HS110 Python Controller
+# No external dependencies — uses only Python standard library.
+# Below are optional dev dependencies:
+
+# pytest    # for running tests
