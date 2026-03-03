@@ -53,7 +53,13 @@ async def register_device(
             detail="Cihazdan MAC adresi alınamadı.",
         )
 
-    # 2) Aynı MAC ile kayıtlı cihaz var mı kontrol et
+    # 2) İsmi cihazın kendisine de yaz (TAPO uygulamasındaki gibi)
+    try:
+        hs_device.set_alias(request.name)
+    except Exception:
+        pass  # İsim yazılamazsa bile DB'ye kaydetmeye devam et
+
+    # 3) Aynı MAC ile kayıtlı cihaz var mı kontrol et
     existing = await db.execute(
         select(Device).where(Device.mac_address == mac_address)
     )
@@ -67,7 +73,7 @@ async def register_device(
         await db.refresh(existing_device)
         return existing_device
 
-    # 3) Yeni cihaz kaydı oluştur
+    # 4) Yeni cihaz kaydı oluştur
     new_device = Device(
         mac_address=mac_address,
         name=request.name,
@@ -124,6 +130,16 @@ async def update_device(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Cihaz bulunamadı (id={device_id})",
+        )
+
+    # İsmi cihazın kendisine de yaz
+    try:
+        hs = HS110Device(ip=device.ip_address, timeout=settings.DEVICE_TIMEOUT)
+        hs.set_alias(request.name)
+    except (ConnectionError, TimeoutError) as e:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"Cihaza bağlanılamadı ({device.ip_address}): {e}",
         )
 
     device.name = request.name

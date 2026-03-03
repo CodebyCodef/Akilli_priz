@@ -64,3 +64,22 @@ class ActionResponse(BaseModel):
     success: bool
     message: str
     data: Optional[dict] = None
+
+
+# ─────────────────────────────────────────────
+# WiFi Provisioning Schemas
+# ─────────────────────────────────────────────
+
+class WifiNetwork(BaseModel):
+    """Taranan WiFi ağ bilgisi."""
+    ssid: str
+    key_type: int = Field(description="0=Açık, 2=WEP, 3=WPA/WPA2")
+    rssi: int = Field(description="Sinyal gücü (dBm)")
+
+
+class WifiSetupRequest(BaseModel):
+    """WiFi bağlantı isteği — cihazı ağa bağlar."""
+    ssid: str = Field(..., description="WiFi ağ adı", examples=["MyWiFi"])
+    password: str = Field(..., description="WiFi şifresi", examples=["password123"])
+    key_type: int = Field(default=3, description="Şifreleme tipi: 0=Açık, 2=WEP, 3=WPA/WPA2")
+

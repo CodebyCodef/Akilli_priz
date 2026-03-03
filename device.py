@@ -278,5 +278,57 @@ class HS110Device:
         cmd = {"netif": {"get_scaninfo": {"refresh": 1}}}
         return self.send_command(cmd)
 
+    def get_scan_wifi_list(self) -> list[dict]:
+        """
+        Scan WiFi and return a clean list of networks.
+
+        Returns:
+            List of dicts with keys: ssid, key_type, rssi
+        """
+        raw = self.scan_wifi()
+        ap_list = (
+            raw
+            .get("netif", {})
+            .get("get_scaninfo", {})
+            .get("ap_list", [])
+        )
+        return [
+            {
+                "ssid": ap.get("ssid", ""),
+                "key_type": ap.get("key_type", 0),
+                "rssi": ap.get("rssi", 0),
+            }
+            for ap in ap_list
+        ]
+
+    def set_wifi(self, ssid: str, password: str, key_type: int = 3) -> dict:
+        """
+        Connect the device to a WiFi network.
+
+        This is the command that replaces the TAPO/Kasa mobile app's
+        WiFi provisioning step. After reset, the device creates its own AP.
+        Connect to that AP, then call this method to configure WiFi.
+
+        Args:
+            ssid: WiFi network name.
+            password: WiFi password.
+            key_type: Encryption type (0=none, 2=WEP, 3=WPA/WPA2).
+
+        Returns:
+            Device response dict.
+        """
+        cmd = {
+            "netif": {
+                "set_stainfo": {
+                    "ssid": ssid,
+                    "password": password,
+                    "key_type": key_type,
+                }
+            }
+        }
+        logger.info(f"Setting WiFi to '{ssid}' on {self.ip}")
+        return self.send_command(cmd)
+
     def __repr__(self) -> str:
         return f"HS110Device(ip='{self.ip}', port={self.port})"
+

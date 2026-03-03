@@ -22,6 +22,7 @@ from config import settings
 from database import init_db, close_db
 from routes import devices as device_routes
 from routes import control as control_routes
+from routes import wifi as wifi_routes
 
 
 @asynccontextmanager
@@ -75,6 +76,7 @@ app.add_middleware(
 
 app.include_router(device_routes.router)
 app.include_router(control_routes.router)
+app.include_router(wifi_routes.router)
 
 
 # ─────────────────────────────────────────────
