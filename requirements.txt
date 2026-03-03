@@ -1,5 +1,11 @@
 # TP-Link HS110 Python Controller
-# No external dependencies — uses only Python standard library.
-# Below are optional dev dependencies:
+# Core API dependencies
+fastapi
+uvicorn[standard]
+sqlalchemy[asyncio]
+asyncpg
+pydantic-settings
+python-dotenv
 
-# pytest    # for running tests
+# Optional dev dependencies
+# pytest

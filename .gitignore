@@ -27,6 +27,9 @@ htmlcov/
 .coverage
 test_results.txt
 
+# Environment
+.env
+
 # OS
 Thumbs.db
 .DS_Store
