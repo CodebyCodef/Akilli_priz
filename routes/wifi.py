@@ -14,7 +14,7 @@ Not: Bu endpoint'ler DB gerektirmez — doğrudan IP ile cihaza bağlanır.
 from fastapi import APIRouter, HTTPException, status
 
 from schemas import WifiNetwork, WifiSetupRequest, ActionResponse
-from device import HS110Device
+from core.device import HS110Device
 from config import settings
 
 router = APIRouter(prefix="/api/wifi", tags=["WiFi Provisioning"])
@@ -30,7 +30,7 @@ DEFAULT_AP_IP = "192.168.0.1"
     description=(
         "Cihazın çevresindeki WiFi ağlarını listeler. "
         "Cihaz AP modundayken (reset sonrası) çağırın. "
-        "Varsayılan IP: 192.168.0.1"
+        
     ),
 )
 async def scan_wifi(ip: str = DEFAULT_AP_IP):

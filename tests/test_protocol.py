@@ -10,7 +10,7 @@ import struct
 # Add parent directory to path for imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from protocol import encrypt, decrypt, INITIAL_KEY
+from core.protocol import encrypt, decrypt, INITIAL_KEY
 
 
 class TestEncrypt:

@@ -18,9 +18,9 @@ import signal
 import sys
 import time
 
-from device import HS110Device
-from poller import DevicePoller
-from models import DeviceStatus
+from core.device import HS110Device
+from core.poller import DevicePoller
+from core.models import DeviceStatus
 
 
 def setup_logging(verbose: bool = False):

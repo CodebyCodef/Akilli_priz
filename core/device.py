@@ -9,8 +9,8 @@ import logging
 from datetime import datetime
 from typing import Optional
 
-from protocol import encrypt, decrypt
-from models import DeviceInfo, EnergyInfo, DailyEnergyStat, DeviceStatus
+from core.protocol import encrypt, decrypt
+from core.models import DeviceInfo, EnergyInfo, DailyEnergyStat, DeviceStatus
 
 logger = logging.getLogger(__name__)
 

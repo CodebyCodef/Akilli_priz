@@ -6,15 +6,15 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
-from database import get_db
-from db_models import Device
+from db.database import get_db
+from db.db_models import Device
 from schemas import (
     DeviceRegisterRequest,
     DeviceUpdateRequest,
     DeviceResponse,
     ActionResponse,
 )
-from device import HS110Device
+from core.device import HS110Device
 from config import settings
 
 router = APIRouter(prefix="/api/devices", tags=["Cihaz Yönetimi"])

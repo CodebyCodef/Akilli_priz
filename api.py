@@ -19,10 +19,11 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from config import settings
-from database import init_db, close_db
+from db.database import init_db, close_db
 from routes import devices as device_routes
 from routes import control as control_routes
 from routes import wifi as wifi_routes
+from routes import discovery as discovery_routes
 
 
 @asynccontextmanager
@@ -74,6 +75,7 @@ app.add_middleware(
 # Routers
 # ─────────────────────────────────────────────
 
+app.include_router(discovery_routes.router)   # ← discover önce! yoksa {device_id} yakalar
 app.include_router(device_routes.router)
 app.include_router(control_routes.router)
 app.include_router(wifi_routes.router)

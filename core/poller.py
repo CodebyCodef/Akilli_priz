@@ -8,8 +8,8 @@ import threading
 import time
 from typing import Callable, Optional
 
-from device import HS110Device
-from models import DeviceStatus
+from core.device import HS110Device
+from core.models import DeviceStatus
 
 logger = logging.getLogger(__name__)
 

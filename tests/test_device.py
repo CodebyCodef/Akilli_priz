@@ -12,9 +12,9 @@ from unittest.mock import patch, MagicMock
 # Add parent directory to path for imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from protocol import encrypt, decrypt
-from device import HS110Device
-from models import DeviceInfo, EnergyInfo
+from core.protocol import encrypt, decrypt
+from core.device import HS110Device
+from core.models import DeviceInfo, EnergyInfo
 
 
 def create_mock_response(response_dict: dict) -> bytes:
@@ -79,7 +79,7 @@ class TestDeviceCommands:
 
         return device, mock_socket
 
-    @patch("device.socket.socket")
+    @patch("core.device.socket.socket")
     def test_get_sysinfo(self, mock_socket_class):
         device, mock_sock = self._create_device_with_mock(
             self.SAMPLE_SYSINFO_RESPONSE
@@ -97,7 +97,7 @@ class TestDeviceCommands:
         assert info.rssi == -55
         assert info.on_time == 3600
 
-    @patch("device.socket.socket")
+    @patch("core.device.socket.socket")
     def test_get_realtime_energy(self, mock_socket_class):
         device, mock_sock = self._create_device_with_mock(
             self.SAMPLE_ENERGY_RESPONSE
@@ -115,7 +115,7 @@ class TestDeviceCommands:
         assert abs(energy.current_a - 0.195) < 0.001
         assert energy.power_w == 45.2
 
-    @patch("device.socket.socket")
+    @patch("core.device.socket.socket")
     def test_turn_on_sends_correct_command(self, mock_socket_class):
         device, mock_sock = self._create_device_with_mock(
             {"system": {"set_relay_state": {"err_code": 0}}}
@@ -133,7 +133,7 @@ class TestDeviceCommands:
         parsed = json.loads(decrypted)
         assert parsed == {"system": {"set_relay_state": {"state": 1}}}
 
-    @patch("device.socket.socket")
+    @patch("core.device.socket.socket")
     def test_turn_off_sends_correct_command(self, mock_socket_class):
         device, mock_sock = self._create_device_with_mock(
             {"system": {"set_relay_state": {"err_code": 0}}}
@@ -148,7 +148,7 @@ class TestDeviceCommands:
         parsed = json.loads(decrypted)
         assert parsed == {"system": {"set_relay_state": {"state": 0}}}
 
-    @patch("device.socket.socket")
+    @patch("core.device.socket.socket")
     def test_set_led_on(self, mock_socket_class):
         device, mock_sock = self._create_device_with_mock(
             {"system": {"set_led_off": {"err_code": 0}}}
@@ -163,7 +163,7 @@ class TestDeviceCommands:
         parsed = json.loads(decrypted)
         assert parsed == {"system": {"set_led_off": {"off": 0}}}
 
-    @patch("device.socket.socket")
+    @patch("core.device.socket.socket")
     def test_connection_error(self, mock_socket_class):
         device = HS110Device(self.FAKE_IP)
         mock_sock = MagicMock()

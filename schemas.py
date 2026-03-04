@@ -83,3 +83,21 @@ class WifiSetupRequest(BaseModel):
     password: str = Field(..., description="WiFi şifresi", examples=["password123"])
     key_type: int = Field(default=3, description="Şifreleme tipi: 0=Açık, 2=WEP, 3=WPA/WPA2")
 
+
+# ─────────────────────────────────────────────
+# Discovery Schemas
+# ─────────────────────────────────────────────
+
+class DiscoveredDeviceResponse(BaseModel):
+    """Keşfedilen TP-Link cihaz bilgisi."""
+    ip: str = Field(description="Cihazın ağdaki IP adresi")
+    alias: str = Field(default="", description="Cihaz takma adı")
+    model: str = Field(default="", description="Cihaz modeli (ör: HS110)")
+    mac: str = Field(default="", description="MAC adresi")
+    device_id: str = Field(default="", description="Cihaz kimliği")
+    is_on: bool = Field(default=False, description="Röle durumu (açık/kapalı)")
+    rssi: int = Field(default=0, description="WiFi sinyal gücü (dBm)")
+    hardware_version: str = Field(default="", description="Donanım versiyonu")
+    software_version: str = Field(default="", description="Yazılım versiyonu")
+
+
