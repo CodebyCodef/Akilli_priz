@@ -1,21 +1,22 @@
 """
-TP-Link Cihaz Keşif Modülü — UDP broadcast ile ağdaki cihazları bulur.
+TP-Link Cihaz Keşif Modülü — UDP broadcast + TCP subnet tarama.
 
-TP-Link akıllı ev cihazları, UDP port 9999 üzerinden broadcast olarak
-gönderilen get_sysinfo komutuna yanıt verir. Bu modül bu mekanizmayı
-kullanarak ağdaki tüm TP-Link cihazları otomatik olarak keşfeder.
+İki yöntem kullanarak ağdaki TP-Link cihazları bulur:
 
-Nasıl Çalışıyor:
-    1. protocol.py'deki encrypt() ile get_sysinfo komutunu şifreler
-    2. 255.255.255.255:9999 adresine UDP broadcast olarak gönderir
-    3. Ağdaki tüm TP-Link cihazlar kendi bilgileriyle (IP, alias, model, MAC) yanıt verir
-    4. Yanıtlar protocol.py'deki decrypt() ile çözülür ve listeye derlenir
+  1. UDP Broadcast (hızlı, ~3s)
+     → 255.255.255.255:9999 adresine get_sysinfo gönderir
+     → Ağdaki tüm cihazlar anında yanıt verir
+     ⚠ Windows Firewall veya router bu yöntemi engelleyebilir
 
-Önemli Fark — TCP vs UDP Şifreleme:
-    TCP: [4-byte length header] + [XOR payload]  → protocol.py bunu yapar
-    UDP: [XOR payload only, header yok]           → bu modülde ayrı fonksiyon
-    TP-Link cihazlar UDP yanıtında bazen header ekler, bazen eklemez.
-    Bu yüzden yanıt çözümünde otomatik algılama yapılır.
+  2. TCP Subnet Scan (yavaş ama güvenilir, ~10-30s)
+     → Subnet'teki her IP'ye TCP 9999 ile bağlanmayı dener
+     → Bağlanan IP'lerden get_sysinfo alır
+     → ThreadPoolExecutor ile paralel çalışır (hızlandırılmış)
+     ✓ Firewall genellikle engellemez
+
+Strateji:
+  - Önce UDP dene
+  - UDP sonuç bulamazsa otomatik TCP fallback yap
 """
 
 import json
@@ -23,19 +24,16 @@ import socket
 import struct
 import logging
 import asyncio
+import ipaddress
 from dataclasses import dataclass
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
-from core.protocol import INITIAL_KEY
+from core.protocol import INITIAL_KEY, encrypt, decrypt
 
 logger = logging.getLogger(__name__)
 
-# TP-Link cihazları TCP/UDP port 9999 üzerinden haberleşir
 TPLINK_PORT = 9999
-
-# UDP broadcast adresi — tüm ağa yayın yapar
-BROADCAST_ADDR = "255.255.255.255"
-
-# Keşif komutu — tüm TP-Link cihazları bu komuta yanıt verir
+BROADCAST_ADDR = "10.141.5.255"
 DISCOVERY_QUERY = '{"system":{"get_sysinfo":{}}}'
 
 
@@ -53,18 +51,11 @@ class DiscoveredDevice:
     software_version: str = ""
 
 
-def _xor_encrypt(message: str) -> bytes:
-    """
-    XOR Autokey şifreleme — protocol.py ile aynı algoritma ama
-    UDP için 4-byte length header EKLENMEZ.
+# ─── XOR Şifreleme (UDP) ──────────────────────────────────
 
-    protocol.py'deki encrypt() fonksiyonu TCP içindir ve başına
-    4-byte Big Endian header koyar. UDP broadcast'te bu header
-    gönderilmez, sadece XOR payload gönderilir.
-
-    Algoritma: key=0xAB → her karakter: encrypted = char XOR key, key = encrypted
-    """
-    key = INITIAL_KEY  # protocol.py'den 0xAB
+def _xor_encrypt_udp(message: str) -> bytes:
+    """UDP için XOR şifreleme — 4-byte header OLMADAN."""
+    key = INITIAL_KEY
     result = bytearray()
     for char in message:
         encrypted_byte = ord(char) ^ key
@@ -74,22 +65,11 @@ def _xor_encrypt(message: str) -> bytes:
 
 
 def _xor_decrypt_auto(data: bytes) -> str:
-    """
-    XOR Autokey çözme — protocol.py ile aynı algoritma.
-
-    Bazı cihazlar UDP yanıtına 4-byte header ekler, bazıları eklemez.
-    Bu fonksiyon otomatik algılama yapar:
-      - İlk 4 byte'ı length olarak parse eder
-      - Eğer len(data) - 4 == length ise → header var, atla
-      - Değilse → header yok, tüm veriyi çöz
-
-    Algoritma: key=0xAB → her byte: decrypted = byte XOR key, key = byte
-    """
+    """XOR çözme — header varsa otomatik atlar."""
     if len(data) > 4:
         potential_length = struct.unpack(">I", data[:4])[0]
         if potential_length == len(data) - 4:
-            data = data[4:]  # TCP-style header var, atla
-
+            data = data[4:]
     key = INITIAL_KEY
     result = []
     for byte in data:
@@ -99,95 +79,303 @@ def _xor_decrypt_auto(data: bytes) -> str:
     return "".join(result)
 
 
-def discover_devices(timeout: float = 3.0) -> list[DiscoveredDevice]:
-    """
-    UDP broadcast ile ağdaki TP-Link cihazları keşfeder.
+def _parse_sysinfo(ip: str, response: dict) -> DiscoveredDevice:
+    """get_sysinfo yanıtından DiscoveredDevice oluşturur."""
+    info = response.get("system", {}).get("get_sysinfo", {})
+    return DiscoveredDevice(
+        ip=ip,
+        alias=info.get("alias", ""),
+        model=info.get("model", ""),
+        mac=info.get("mac", ""),
+        device_id=info.get("deviceId", ""),
+        is_on=info.get("relay_state", 0) == 1,
+        rssi=info.get("rssi", 0),
+        hardware_version=info.get("hw_ver", ""),
+        software_version=info.get("sw_ver", ""),
+    )
 
-    Akış:
-        1. UDP socket aç, broadcast izni ver
-        2. encrypt(get_sysinfo) → 255.255.255.255:9999'a gönder
-        3. timeout süresince yanıtları topla
-        4. Her yanıtı decrypt edip cihaz listesine ekle
 
-    Args:
-        timeout: Yanıt bekleme süresi (saniye). Varsayılan 3s.
-                 Büyük ağlarda 5-10s önerilir.
+# ─── Yöntem 1: UDP Broadcast ──────────────────────────────
 
-    Returns:
-        Bulunan TP-Link cihazların listesi.
-    """
+def _discover_udp(timeout: float = 3.0) -> list[DiscoveredDevice]:
+    """UDP broadcast ile hızlı keşif."""
     devices = []
     seen_ips = set()
 
     try:
-        # 1. UDP socket — broadcast izinli
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         sock.settimeout(timeout)
 
-        # 2. Şifreli keşif komutunu broadcast olarak gönder
-        encrypted_query = _xor_encrypt(DISCOVERY_QUERY)
-        sock.sendto(encrypted_query, (BROADCAST_ADDR, TPLINK_PORT))
-        logger.info(
-            f"UDP keşif gönderildi → {BROADCAST_ADDR}:{TPLINK_PORT} "
-            f"({len(encrypted_query)} byte)"
-        )
+        encrypted = _xor_encrypt_udp(DISCOVERY_QUERY)
+        sock.sendto(encrypted, (BROADCAST_ADDR, TPLINK_PORT))
+        logger.info(f"[UDP] Broadcast gönderildi → {BROADCAST_ADDR}:{TPLINK_PORT}")
 
-        # 3. Yanıtları timeout'a kadar topla
         while True:
             try:
                 data, addr = sock.recvfrom(4096)
                 ip = addr[0]
-
-                # Aynı IP'den birden fazla yanıt gelebilir, atla
                 if ip in seen_ips:
                     continue
                 seen_ips.add(ip)
 
-                # 4. Yanıtı çöz ve parse et
-                try:
-                    decrypted = _xor_decrypt_auto(data)
-                    response = json.loads(decrypted)
-                    info = response.get("system", {}).get("get_sysinfo", {})
-
-                    device = DiscoveredDevice(
-                        ip=ip,
-                        alias=info.get("alias", ""),
-                        model=info.get("model", ""),
-                        mac=info.get("mac", ""),
-                        device_id=info.get("deviceId", ""),
-                        is_on=info.get("relay_state", 0) == 1,
-                        rssi=info.get("rssi", 0),
-                        hardware_version=info.get("hw_ver", ""),
-                        software_version=info.get("sw_ver", ""),
-                    )
-                    devices.append(device)
-                    logger.info(
-                        f"✓ Cihaz bulundu: {device.alias or '(isimsiz)'} "
-                        f"({ip}) — {device.model}"
-                    )
-
-                except (json.JSONDecodeError, UnicodeDecodeError) as e:
-                    logger.warning(f"Yanıt çözülemedi ({ip}): {e}")
+                decrypted = _xor_decrypt_auto(data)
+                response = json.loads(decrypted)
+                device = _parse_sysinfo(ip, response)
+                devices.append(device)
+                logger.info(f"[UDP] ✓ {device.alias or '?'} ({ip})")
 
             except socket.timeout:
-                # Timeout → tarama bitti
                 break
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                continue
 
         sock.close()
-
     except OSError as e:
-        logger.error(f"UDP keşif hatası: {e}")
+        logger.warning(f"[UDP] Hata: {e}")
 
-    logger.info(f"Keşif tamamlandı → {len(devices)} cihaz bulundu")
     return devices
 
 
-async def discover_devices_async(timeout: float = 3.0) -> list[DiscoveredDevice]:
+# ─── Yöntem 2: TCP Subnet Scan ────────────────────────────
+
+def _get_arp_ips() -> list[str]:
     """
-    Async wrapper — blocking UDP taramayı thread pool'da çalıştırır.
-    FastAPI endpoint'leri async olduğu için bu wrapper gereklidir.
+    ARP tablosundan bilinen IP adreslerini çeker.
+    Bu IP'ler zaten ağda aktif — en hızlı tarama yöntemi.
     """
+    import subprocess
+    ips = []
+    try:
+        result = subprocess.run(
+            ["arp", "-a"],
+            capture_output=True, text=True, encoding="utf-8", errors="replace"
+        )
+        for line in result.stdout.split("\n"):
+            line = line.strip()
+            # "10.141.5.100  aa-bb-cc-dd-ee-ff  dynamic" formatı
+            parts = line.split()
+            if len(parts) >= 2:
+                candidate = parts[0]
+                # Geçerli IP mi kontrol et
+                try:
+                    addr = ipaddress.ip_address(candidate)
+                    if addr.is_private and not addr.is_loopback:
+                        ips.append(str(addr))
+                except ValueError:
+                    continue
+    except Exception as e:
+        logger.warning(f"ARP tablosu okunamadı: {e}")
+    return ips
+
+
+def _get_all_subnets() -> list[str]:
+    """
+    Tüm ağ adaptörlerinden subnet bilgisini alır ve taranacak
+    IP listesini döner. Gerçek subnet maskını kullanır.
+
+    /24 = 254 IP, /23 = 510 IP, /21 = 2046 IP
+    Büyük subnet'lerde ARP tablosundaki IP'lerin /24 bloklarını tarar.
+    """
+    import subprocess
+    all_ips = set()
+
+    try:
+        # Windows: ipconfig ile tüm adaptörleri al
+        result = subprocess.run(
+            ["ipconfig"], capture_output=True, text=True,
+            encoding="utf-8", errors="replace"
+        )
+
+        lines = result.stdout.split("\n")
+        current_ip = None
+        for line in lines:
+            stripped = line.strip()
+            # IPv4 Address satırı
+            if "IPv4" in stripped and ":" in stripped:
+                ip_str = stripped.split(":")[-1].strip()
+                try:
+                    addr = ipaddress.ip_address(ip_str)
+                    if addr.is_private and not addr.is_loopback:
+                        current_ip = ip_str
+                except ValueError:
+                    current_ip = None
+            # Subnet Mask satırı
+            elif current_ip and ("Subnet" in stripped or "Alt" in stripped) and ":" in stripped:
+                mask_str = stripped.split(":")[-1].strip()
+                try:
+                    network = ipaddress.IPv4Network(
+                        f"{current_ip}/{mask_str}", strict=False
+                    )
+                    prefix = network.prefixlen
+                    num_hosts = network.num_addresses - 2
+
+                    if num_hosts <= 510:  # /24 veya /23 — tamamını tara
+                        for host in network.hosts():
+                            all_ips.add(str(host))
+                        logger.info(
+                            f"[TCP] Adaptör {current_ip}/{prefix} → "
+                            f"{num_hosts} IP taranacak"
+                        )
+                    else:
+                        # /21 gibi büyük subnet — sadece PC'nin /24 bloğunu tara
+                        parts = current_ip.split(".")
+                        base = f"{parts[0]}.{parts[1]}.{parts[2]}"
+                        for i in range(1, 255):
+                            all_ips.add(f"{base}.{i}")
+                        logger.info(
+                            f"[TCP] Adaptör {current_ip}/{prefix} (büyük subnet) → "
+                            f"{base}.0/24 taranacak (254 IP)"
+                        )
+                except (ValueError, TypeError):
+                    pass
+                current_ip = None
+    except Exception as e:
+        logger.warning(f"Adaptör bilgisi alınamadı: {e}")
+
+    # Fallback
+    if not all_ips:
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            s.connect(("8.8.8.8", 80))
+            local_ip = s.getsockname()[0]
+            s.close()
+            parts = local_ip.split(".")
+            base = f"{parts[0]}.{parts[1]}.{parts[2]}"
+            all_ips = {f"{base}.{i}" for i in range(1, 255)}
+        except Exception:
+            all_ips = {f"192.168.1.{i}" for i in range(1, 255)}
+
+    return list(all_ips)
+
+
+def _get_scan_targets() -> list[str]:
+    """
+    Taranacak IP listesini oluşturur:
+      1. ARP tablosundaki bilinen IP'ler (en önemli!)
+      2. Adaptör subnet'lerinden hesaplanan IP'ler
+    ARP IP'leri önce, çünkü cihazın orada olma ihtimali en yüksek.
+    """
+    # 1. ARP tablosu — bilinen aktif cihazlar
+    arp_ips = _get_arp_ips()
+    logger.info(f"[TCP] ARP tablosunda {len(arp_ips)} IP bulundu")
+
+    # 2. ARP IP'lerinin /24 bloklarını da ekle
+    arp_subnets = set()
+    for ip in arp_ips:
+        parts = ip.split(".")
+        base = f"{parts[0]}.{parts[1]}.{parts[2]}"
+        for i in range(1, 255):
+            arp_subnets.add(f"{base}.{i}")
+
+    # 3. Adaptör subnet'leri
+    adapter_ips = _get_all_subnets()
+
+    # Birleştir, tekrarları kaldır
+    all_ips = list(set(arp_ips) | arp_subnets | set(adapter_ips))
+    logger.info(f"[TCP] Toplam {len(all_ips)} benzersiz IP taranacak")
+    return all_ips
+
+
+def _probe_single_ip(ip: str, timeout: float = 0.5) -> DiscoveredDevice | None:
+    """Tek bir IP'ye TCP 9999 ile bağlanıp TP-Link cihaz mı kontrol eder."""
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(timeout)
+        sock.connect((ip, TPLINK_PORT))
+
+        # protocol.py'deki encrypt() kullan — TCP için header'lı
+        encrypted = encrypt(DISCOVERY_QUERY)
+        sock.sendall(encrypted)
+
+        response_data = b""
+        while True:
+            try:
+                chunk = sock.recv(4096)
+                if not chunk:
+                    break
+                response_data += chunk
+            except socket.timeout:
+                break
+        sock.close()
+
+        if not response_data:
+            return None
+
+        # protocol.py'deki decrypt() kullan
+        decrypted = decrypt(response_data)
+        response = json.loads(decrypted)
+        device = _parse_sysinfo(ip, response)
+        logger.info(f"[TCP] ✓ {device.alias or '?'} ({ip})")
+        return device
+
+    except (socket.timeout, socket.error, json.JSONDecodeError):
+        return None
+
+
+def _discover_tcp(timeout_per_ip: float = 0.5, max_workers: int = 100) -> list[DiscoveredDevice]:
+    """
+    TCP ile subnet taraması — paralel çalışır.
+    ARP tablosu + tüm adaptör subnet'lerini tarar.
+    """
+    ips = _get_scan_targets()
+    devices = []
+
+    logger.info(f"[TCP] {len(ips)} IP taranıyor ({max_workers} paralel thread)...")
+
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = {
+            executor.submit(_probe_single_ip, ip, timeout_per_ip): ip
+            for ip in ips
+        }
+        for future in as_completed(futures):
+            result = future.result()
+            if result:
+                devices.append(result)
+
+    logger.info(f"[TCP] Tarama tamamlandı → {len(devices)} cihaz bulundu")
+    return devices
+
+
+# ─── Ana Keşif Fonksiyonu ──────────────────────────────────
+
+def discover_devices(timeout: float = 3.0, method: str = "auto") -> list[DiscoveredDevice]:
+    """
+    TP-Link cihazları keşfeder.
+
+    Args:
+        timeout: UDP bekleme süresi (saniye)
+        method: Tarama yöntemi:
+            "auto" — önce UDP, bulamazsa TCP fallback (önerilen)
+            "udp"  — sadece UDP broadcast
+            "tcp"  — sadece TCP subnet taraması
+
+    Returns:
+        Bulunan cihazların listesi.
+    """
+    if method == "udp":
+        return _discover_udp(timeout)
+
+    if method == "tcp":
+        return _discover_tcp()
+
+    # AUTO: önce UDP dene, bulamazsa TCP'ye düş
+    logger.info("Keşif başlıyor (auto mod: UDP → TCP fallback)")
+
+    devices = _discover_udp(timeout)
+    if devices:
+        logger.info(f"UDP ile {len(devices)} cihaz bulundu")
+        return devices
+
+    logger.info("UDP sonuç vermedi — TCP subnet taramasına geçiliyor...")
+    devices = _discover_tcp()
+    return devices
+
+
+async def discover_devices_async(
+    timeout: float = 3.0, method: str = "auto"
+) -> list[DiscoveredDevice]:
+    """Async wrapper — FastAPI endpoint'leri için."""
     loop = asyncio.get_event_loop()
-    return await loop.run_in_executor(None, discover_devices, timeout)
+    return await loop.run_in_executor(None, discover_devices, timeout, method)

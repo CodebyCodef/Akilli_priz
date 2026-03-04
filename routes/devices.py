@@ -5,6 +5,7 @@ Device CRUD endpoints — kayıt, listeleme, güncelleme, silme.
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 
 from db.database import get_db
 from db.db_models import Device
@@ -80,9 +81,27 @@ async def register_device(
         ip_address=request.ip,
     )
     db.add(new_device)
-    await db.flush()
-    await db.refresh(new_device)
-    return new_device
+    
+    try:
+        await db.flush()
+        await db.refresh(new_device)
+        return new_device
+    except IntegrityError:
+        # Eşzamanlı (concurrent) isteklerde race condition olabilir
+        await db.rollback()
+        existing = await db.execute(
+            select(Device).where(Device.mac_address == mac_address)
+        )
+        existing_device = existing.scalar_one_or_none()
+        
+        if existing_device:
+            existing_device.name = request.name
+            existing_device.ip_address = request.ip
+            await db.flush()
+            await db.refresh(existing_device)
+            return existing_device
+        
+        raise  # Beklenmeyen başka bir IntegrityError ise fırlat
 
 
 @router.get(
