@@ -15,6 +15,7 @@ class DeviceRegisterRequest(BaseModel):
     """POST /api/devices/register — yeni cihaz kaydı."""
     ip: str = Field(..., description="Cihazın yerel ağdaki IP adresi", examples=["192.168.1.100"])
     name: str = Field(..., description="Cihaza verilecek isim", examples=["Salon Priz"])
+    brand: str = Field(default="tplink", description="Cihaz markası (tplink, tuya, xiaomi, vb.)", examples=["tplink"])
 
 
 class DeviceUpdateRequest(BaseModel):
@@ -28,6 +29,7 @@ class DeviceResponse(BaseModel):
     mac_address: str
     name: str
     ip_address: str
+    brand: str = "tplink"
     created_at: datetime
     updated_at: datetime
 
@@ -82,6 +84,30 @@ class WifiSetupRequest(BaseModel):
     ssid: str = Field(..., description="WiFi ağ adı", examples=["MyWiFi"])
     password: str = Field(..., description="WiFi şifresi", examples=["password123"])
     key_type: int = Field(default=3, description="Şifreleme tipi: 0=Açık, 2=WEP, 3=WPA/WPA2")
+
+
+class ScannedWifiResponse(BaseModel):
+    """PC'nin WiFi kartıyla taranan ağ bilgisi."""
+    ssid: str = Field(description="Ağ adı")
+    signal: int = Field(description="Sinyal gücü (%)")
+    auth: str = Field(default="", description="Kimlik doğrulama tipi")
+    is_tplink_ap: bool = Field(default=False, description="TP-Link cihaz AP'si mi?")
+
+
+class WifiProvisionRequest(BaseModel):
+    """Otomatik WiFi provisioning isteği."""
+    device_ap_ssid: str = Field(..., description="Cihazın AP SSID'si (ör: TP-LINK_Smart Plug_XXXX)")
+    target_ssid: str = Field(..., description="Cihazın bağlanacağı WiFi ağı", examples=["Wifi Name"])
+    target_password: str = Field(..., description="Hedef WiFi şifresi", examples=["password"])
+    target_key_type: int = Field(default=3, description="Şifreleme tipi: 0=Açık, 2=WEP, 3=WPA/WPA2")
+
+
+class WifiProvisionResponse(BaseModel):
+    """Otomatik WiFi provisioning sonuç yanıtı."""
+    success: bool
+    message: str
+    steps: list[str] = Field(default_factory=list, description="İşlem adımları log'u")
+    data: Optional[dict] = None
 
 
 # ─────────────────────────────────────────────

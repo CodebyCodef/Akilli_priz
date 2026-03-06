@@ -1,5 +1,5 @@
 """
-Device control endpoints — cihaza TCP üzerinden komut gönderir.
+Device control endpoints — cihaza plugin üzerinden komut gönderir.
 Frontend bu endpoint'leri kullanarak senin PC'n üzerinden cihazı kontrol eder.
 """
 
@@ -10,7 +10,7 @@ from sqlalchemy import select
 from db.database import get_db
 from db.db_models import Device
 from schemas import DeviceInfoResponse, EnergyResponse, ActionResponse
-from core.device import HS110Device
+from plugins import get_plugin
 from config import settings
 
 router = APIRouter(prefix="/api/devices", tags=["Cihaz Kontrolü"])
@@ -28,11 +28,6 @@ async def _get_device_from_db(device_id: int, db: AsyncSession) -> Device:
     return device
 
 
-def _connect_to_device(ip: str) -> HS110Device:
-    """HS110Device TCP client oluştur."""
-    return HS110Device(ip=ip, timeout=settings.DEVICE_TIMEOUT)
-
-
 @router.get(
     "/{device_id}/info",
     response_model=DeviceInfoResponse,
@@ -43,8 +38,13 @@ async def device_info(device_id: int, db: AsyncSession = Depends(get_db)):
     db_device = await _get_device_from_db(device_id, db)
 
     try:
-        hs = _connect_to_device(db_device.ip_address)
-        info = hs.get_sysinfo()
+        plugin = get_plugin(db_device.brand)
+        info = plugin.get_info(db_device.ip_address, timeout=settings.DEVICE_TIMEOUT)
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        )
     except (ConnectionError, TimeoutError) as e:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -74,8 +74,13 @@ async def device_energy(device_id: int, db: AsyncSession = Depends(get_db)):
     db_device = await _get_device_from_db(device_id, db)
 
     try:
-        hs = _connect_to_device(db_device.ip_address)
-        energy = hs.get_realtime_energy()
+        plugin = get_plugin(db_device.brand)
+        energy = plugin.get_energy(db_device.ip_address, timeout=settings.DEVICE_TIMEOUT)
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        )
     except (ConnectionError, TimeoutError) as e:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -99,8 +104,13 @@ async def turn_on(device_id: int, db: AsyncSession = Depends(get_db)):
     db_device = await _get_device_from_db(device_id, db)
 
     try:
-        hs = _connect_to_device(db_device.ip_address)
-        hs.turn_on()
+        plugin = get_plugin(db_device.brand)
+        plugin.turn_on(db_device.ip_address, timeout=settings.DEVICE_TIMEOUT)
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        )
     except (ConnectionError, TimeoutError) as e:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -122,8 +132,13 @@ async def turn_off(device_id: int, db: AsyncSession = Depends(get_db)):
     db_device = await _get_device_from_db(device_id, db)
 
     try:
-        hs = _connect_to_device(db_device.ip_address)
-        hs.turn_off()
+        plugin = get_plugin(db_device.brand)
+        plugin.turn_off(db_device.ip_address, timeout=settings.DEVICE_TIMEOUT)
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        )
     except (ConnectionError, TimeoutError) as e:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -145,8 +160,13 @@ async def led_on(device_id: int, db: AsyncSession = Depends(get_db)):
     db_device = await _get_device_from_db(device_id, db)
 
     try:
-        hs = _connect_to_device(db_device.ip_address)
-        hs.set_led(True)
+        plugin = get_plugin(db_device.brand)
+        plugin.set_led(db_device.ip_address, on=True, timeout=settings.DEVICE_TIMEOUT)
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        )
     except (ConnectionError, TimeoutError) as e:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -168,8 +188,13 @@ async def led_off(device_id: int, db: AsyncSession = Depends(get_db)):
     db_device = await _get_device_from_db(device_id, db)
 
     try:
-        hs = _connect_to_device(db_device.ip_address)
-        hs.set_led(False)
+        plugin = get_plugin(db_device.brand)
+        plugin.set_led(db_device.ip_address, on=False, timeout=settings.DEVICE_TIMEOUT)
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        )
     except (ConnectionError, TimeoutError) as e:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,

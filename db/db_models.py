@@ -29,6 +29,7 @@ class Device(Base):
     mac_address: Mapped[str] = mapped_column(String(17), unique=True, nullable=False, index=True)
     name: Mapped[str] = mapped_column(String(100), nullable=False)
     ip_address: Mapped[str] = mapped_column(String(45), nullable=False)
+    brand: Mapped[str] = mapped_column(String(50), default="tplink", nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default=lambda: datetime.now(timezone.utc),

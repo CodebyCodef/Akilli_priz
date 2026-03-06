@@ -15,7 +15,7 @@ from schemas import (
     DeviceResponse,
     ActionResponse,
 )
-from core.device import HS110Device
+from plugins import get_plugin
 from config import settings
 
 router = APIRouter(prefix="/api/devices", tags=["Cihaz Yönetimi"])
@@ -32,11 +32,17 @@ async def register_device(
     request: DeviceRegisterRequest,
     db: AsyncSession = Depends(get_db),
 ):
-    # 1) Cihaza TCP ile bağlan ve MAC adresini al
+    # 1) Plugin üzerinden cihaza bağlan ve MAC adresini al
     try:
-        hs_device = HS110Device(ip=request.ip, timeout=settings.DEVICE_TIMEOUT)
-        info = hs_device.get_sysinfo()
-        mac_address = info.mac
+        plugin = get_plugin(request.brand)
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        )
+
+    try:
+        mac_address = plugin.get_mac(request.ip, timeout=settings.DEVICE_TIMEOUT)
     except (ConnectionError, TimeoutError) as e:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -56,7 +62,7 @@ async def register_device(
 
     # 2) İsmi cihazın kendisine de yaz (TAPO uygulamasındaki gibi)
     try:
-        hs_device.set_alias(request.name)
+        plugin.set_alias(request.ip, request.name, timeout=settings.DEVICE_TIMEOUT)
     except Exception:
         pass  # İsim yazılamazsa bile DB'ye kaydetmeye devam et
 
@@ -67,9 +73,10 @@ async def register_device(
     existing_device = existing.scalar_one_or_none()
 
     if existing_device:
-        # MAC zaten kayıtlı — IP ve ismi güncelle
+        # MAC zaten kayıtlı — IP, isim ve markayı güncelle
         existing_device.name = request.name
         existing_device.ip_address = request.ip
+        existing_device.brand = request.brand
         await db.flush()
         await db.refresh(existing_device)
         return existing_device
@@ -79,6 +86,7 @@ async def register_device(
         mac_address=mac_address,
         name=request.name,
         ip_address=request.ip,
+        brand=request.brand,
     )
     db.add(new_device)
     
@@ -151,10 +159,15 @@ async def update_device(
             detail=f"Cihaz bulunamadı (id={device_id})",
         )
 
-    # İsmi cihazın kendisine de yaz
+    # İsmi cihazın kendisine de yaz (plugin üzerinden)
     try:
-        hs = HS110Device(ip=device.ip_address, timeout=settings.DEVICE_TIMEOUT)
-        hs.set_alias(request.name)
+        plugin = get_plugin(device.brand)
+        plugin.set_alias(device.ip_address, request.name, timeout=settings.DEVICE_TIMEOUT)
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        )
     except (ConnectionError, TimeoutError) as e:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
