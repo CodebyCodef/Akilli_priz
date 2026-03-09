@@ -33,7 +33,7 @@ from core.protocol import INITIAL_KEY, encrypt, decrypt
 logger = logging.getLogger(__name__)
 
 TPLINK_PORT = 9999
-BROADCAST_ADDR = "10.141.5.255"
+BROADCAST_ADDR = "255.255.255.255"
 DISCOVERY_QUERY = '{"system":{"get_sysinfo":{}}}'
 
 
