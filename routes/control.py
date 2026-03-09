@@ -10,7 +10,7 @@ from sqlalchemy import select
 from db.database import get_db
 from db.db_models import Device
 from schemas import DeviceInfoResponse, EnergyResponse, ActionResponse
-from plugins import get_plugin
+from core.action_executor import execute_plugin_action
 from config import settings
 
 router = APIRouter(prefix="/api/devices", tags=["Cihaz Kontrolü"])
@@ -37,19 +37,12 @@ async def _get_device_from_db(device_id: int, db: AsyncSession) -> Device:
 async def device_info(device_id: int, db: AsyncSession = Depends(get_db)):
     db_device = await _get_device_from_db(device_id, db)
 
-    try:
-        plugin = get_plugin(db_device.brand)
-        info = plugin.get_info(db_device.ip_address, timeout=settings.DEVICE_TIMEOUT)
-    except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e),
-        )
-    except (ConnectionError, TimeoutError) as e:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=f"Cihaza bağlanılamadı ({db_device.ip_address}): {e}",
-        )
+    info = execute_plugin_action(
+        brand=db_device.brand,
+        ip=db_device.ip_address,
+        timeout=settings.DEVICE_TIMEOUT,
+        action=lambda p, ip, t: p.get_info(ip, timeout=t)
+    )
 
     return DeviceInfoResponse(
         alias=info.alias,
@@ -73,19 +66,12 @@ async def device_info(device_id: int, db: AsyncSession = Depends(get_db)):
 async def device_energy(device_id: int, db: AsyncSession = Depends(get_db)):
     db_device = await _get_device_from_db(device_id, db)
 
-    try:
-        plugin = get_plugin(db_device.brand)
-        energy = plugin.get_energy(db_device.ip_address, timeout=settings.DEVICE_TIMEOUT)
-    except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e),
-        )
-    except (ConnectionError, TimeoutError) as e:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=f"Cihaza bağlanılamadı ({db_device.ip_address}): {e}",
-        )
+    energy = execute_plugin_action(
+        brand=db_device.brand,
+        ip=db_device.ip_address,
+        timeout=settings.DEVICE_TIMEOUT,
+        action=lambda p, ip, t: p.get_energy(ip, timeout=t)
+    )
 
     return EnergyResponse(
         voltage_v=energy.voltage_v,
@@ -103,19 +89,12 @@ async def device_energy(device_id: int, db: AsyncSession = Depends(get_db)):
 async def turn_on(device_id: int, db: AsyncSession = Depends(get_db)):
     db_device = await _get_device_from_db(device_id, db)
 
-    try:
-        plugin = get_plugin(db_device.brand)
-        plugin.turn_on(db_device.ip_address, timeout=settings.DEVICE_TIMEOUT)
-    except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e),
-        )
-    except (ConnectionError, TimeoutError) as e:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=f"Cihaza bağlanılamadı: {e}",
-        )
+    execute_plugin_action(
+        brand=db_device.brand,
+        ip=db_device.ip_address,
+        timeout=settings.DEVICE_TIMEOUT,
+        action=lambda p, ip, t: p.turn_on(ip, timeout=t)
+    )
 
     return ActionResponse(
         success=True,
@@ -131,19 +110,12 @@ async def turn_on(device_id: int, db: AsyncSession = Depends(get_db)):
 async def turn_off(device_id: int, db: AsyncSession = Depends(get_db)):
     db_device = await _get_device_from_db(device_id, db)
 
-    try:
-        plugin = get_plugin(db_device.brand)
-        plugin.turn_off(db_device.ip_address, timeout=settings.DEVICE_TIMEOUT)
-    except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e),
-        )
-    except (ConnectionError, TimeoutError) as e:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=f"Cihaza bağlanılamadı: {e}",
-        )
+    execute_plugin_action(
+        brand=db_device.brand,
+        ip=db_device.ip_address,
+        timeout=settings.DEVICE_TIMEOUT,
+        action=lambda p, ip, t: p.turn_off(ip, timeout=t)
+    )
 
     return ActionResponse(
         success=True,
@@ -159,19 +131,12 @@ async def turn_off(device_id: int, db: AsyncSession = Depends(get_db)):
 async def led_on(device_id: int, db: AsyncSession = Depends(get_db)):
     db_device = await _get_device_from_db(device_id, db)
 
-    try:
-        plugin = get_plugin(db_device.brand)
-        plugin.set_led(db_device.ip_address, on=True, timeout=settings.DEVICE_TIMEOUT)
-    except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e),
-        )
-    except (ConnectionError, TimeoutError) as e:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=f"Cihaza bağlanılamadı: {e}",
-        )
+    execute_plugin_action(
+        brand=db_device.brand,
+        ip=db_device.ip_address,
+        timeout=settings.DEVICE_TIMEOUT,
+        action=lambda p, ip, t: p.set_led(ip, on=True, timeout=t)
+    )
 
     return ActionResponse(
         success=True,
@@ -187,19 +152,12 @@ async def led_on(device_id: int, db: AsyncSession = Depends(get_db)):
 async def led_off(device_id: int, db: AsyncSession = Depends(get_db)):
     db_device = await _get_device_from_db(device_id, db)
 
-    try:
-        plugin = get_plugin(db_device.brand)
-        plugin.set_led(db_device.ip_address, on=False, timeout=settings.DEVICE_TIMEOUT)
-    except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e),
-        )
-    except (ConnectionError, TimeoutError) as e:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=f"Cihaza bağlanılamadı: {e}",
-        )
+    execute_plugin_action(
+        brand=db_device.brand,
+        ip=db_device.ip_address,
+        timeout=settings.DEVICE_TIMEOUT,
+        action=lambda p, ip, t: p.set_led(ip, on=False, timeout=t)
+    )
 
     return ActionResponse(
         success=True,

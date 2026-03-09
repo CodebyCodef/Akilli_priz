@@ -15,7 +15,7 @@ from schemas import (
     DeviceResponse,
     ActionResponse,
 )
-from plugins import get_plugin
+from core.action_executor import execute_plugin_action
 from config import settings
 
 router = APIRouter(prefix="/api/devices", tags=["Cihaz Yönetimi"])
@@ -33,26 +33,12 @@ async def register_device(
     db: AsyncSession = Depends(get_db),
 ):
     # 1) Plugin üzerinden cihaza bağlan ve MAC adresini al
-    try:
-        plugin = get_plugin(request.brand)
-    except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e),
-        )
-
-    try:
-        mac_address = plugin.get_mac(request.ip, timeout=settings.DEVICE_TIMEOUT)
-    except (ConnectionError, TimeoutError) as e:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=f"Cihaza bağlanılamadı ({request.ip}): {e}",
-        )
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Cihaz bilgisi alınamadı: {e}",
-        )
+    mac_address = execute_plugin_action(
+        brand=request.brand,
+        ip=request.ip,
+        timeout=settings.DEVICE_TIMEOUT,
+        action=lambda p, ip, t: p.get_mac(ip, timeout=t)
+    )
 
     if not mac_address:
         raise HTTPException(
@@ -62,7 +48,12 @@ async def register_device(
 
     # 2) İsmi cihazın kendisine de yaz (TAPO uygulamasındaki gibi)
     try:
-        plugin.set_alias(request.ip, request.name, timeout=settings.DEVICE_TIMEOUT)
+        execute_plugin_action(
+            brand=request.brand,
+            ip=request.ip,
+            timeout=settings.DEVICE_TIMEOUT,
+            action=lambda p, ip, t: p.set_alias(ip, request.name, timeout=t)
+        )
     except Exception:
         pass  # İsim yazılamazsa bile DB'ye kaydetmeye devam et
 
@@ -160,19 +151,12 @@ async def update_device(
         )
 
     # İsmi cihazın kendisine de yaz (plugin üzerinden)
-    try:
-        plugin = get_plugin(device.brand)
-        plugin.set_alias(device.ip_address, request.name, timeout=settings.DEVICE_TIMEOUT)
-    except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e),
-        )
-    except (ConnectionError, TimeoutError) as e:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=f"Cihaza bağlanılamadı ({device.ip_address}): {e}",
-        )
+    execute_plugin_action(
+        brand=device.brand,
+        ip=device.ip_address,
+        timeout=settings.DEVICE_TIMEOUT,
+        action=lambda p, ip, t: p.set_alias(ip, request.name, timeout=t)
+    )
 
     device.name = request.name
     await db.flush()
